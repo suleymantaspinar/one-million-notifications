@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/notifications-management-api/internal/database"
 	"github.com/notifications-management-api/internal/model"
 )
 
@@ -24,14 +25,19 @@ func NewNotificationRepository(pool *pgxpool.Pool) *NotificationRepository {
 
 // Create creates a new notification.
 func (r *NotificationRepository) Create(ctx context.Context, notification *model.Notification) error {
+	return r.CreateWithTx(ctx, r.pool, notification)
+}
+
+// CreateWithTx creates a new notification within a transaction.
+func (r *NotificationRepository) CreateWithTx(ctx context.Context, tx database.DBTX, notification *model.Notification) error {
 	query := `
 		INSERT INTO notifications (message_id, batch_id, recipient, channel, content, priority, status, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`
-	_, err := r.pool.Exec(ctx, query,
+	_, err := tx.Exec(ctx, query,
 		notification.MessageID,
 		notification.BatchID,
-		notification.To,
+		notification.Recipient,
 		notification.Channel,
 		notification.Content,
 		notification.Priority,
@@ -58,7 +64,7 @@ func (r *NotificationRepository) GetByID(ctx context.Context, messageID uuid.UUI
 	err := row.Scan(
 		&n.MessageID,
 		&n.BatchID,
-		&n.To,
+		&n.Recipient,
 		&n.Channel,
 		&n.Content,
 		&n.Priority,
@@ -94,7 +100,6 @@ func (r *NotificationRepository) UpdateStatus(ctx context.Context, messageID uui
 
 // List retrieves notifications with filtering and pagination.
 func (r *NotificationRepository) List(ctx context.Context, filter model.NotificationFilter) ([]model.Notification, int, error) {
-	// Build the WHERE clause dynamically
 	conditions := []string{}
 	args := []interface{}{}
 	argIndex := 1
@@ -125,7 +130,6 @@ func (r *NotificationRepository) List(ctx context.Context, filter model.Notifica
 		whereClause = "WHERE " + strings.Join(conditions, " AND ")
 	}
 
-	// Get total count
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM notifications %s", whereClause)
 	var totalCount int
 	err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&totalCount)
@@ -133,7 +137,6 @@ func (r *NotificationRepository) List(ctx context.Context, filter model.Notifica
 		return nil, 0, fmt.Errorf("failed to count notifications: %w", err)
 	}
 
-	// Get paginated results
 	offset := (filter.Page - 1) * filter.PageSize
 	args = append(args, filter.PageSize, offset)
 
@@ -157,7 +160,7 @@ func (r *NotificationRepository) List(ctx context.Context, filter model.Notifica
 		err := rows.Scan(
 			&n.MessageID,
 			&n.BatchID,
-			&n.To,
+			&n.Recipient,
 			&n.Channel,
 			&n.Content,
 			&n.Priority,
@@ -194,7 +197,7 @@ func (r *NotificationRepository) GetByBatchID(ctx context.Context, batchID uuid.
 		err := rows.Scan(
 			&n.MessageID,
 			&n.BatchID,
-			&n.To,
+			&n.Recipient,
 			&n.Channel,
 			&n.Content,
 			&n.Priority,

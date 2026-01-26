@@ -4,9 +4,18 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/notifications-management-api/internal/config"
 )
+
+// DBTX interface for both pool and transaction.
+type DBTX interface {
+	Exec(ctx context.Context, sql string, arguments ...interface{}) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row
+}
 
 // PostgresDB wraps the pgx pool.
 type PostgresDB struct {
@@ -39,7 +48,6 @@ func NewPostgresDB(ctx context.Context, cfg config.DatabaseConfig) (*PostgresDB,
 		return nil, fmt.Errorf("failed to create connection pool: %w", err)
 	}
 
-	// Test the connection
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("failed to ping database: %w", err)
@@ -58,4 +66,9 @@ func (db *PostgresDB) Close() {
 // Health checks if the database is healthy.
 func (db *PostgresDB) Health(ctx context.Context) error {
 	return db.Pool.Ping(ctx)
+}
+
+// BeginTx starts a new transaction.
+func (db *PostgresDB) BeginTx(ctx context.Context) (pgx.Tx, error) {
+	return db.Pool.Begin(ctx)
 }

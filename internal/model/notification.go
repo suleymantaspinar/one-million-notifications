@@ -47,7 +47,7 @@ const (
 type Notification struct {
 	MessageID uuid.UUID            `json:"messageId"`
 	BatchID   *uuid.UUID           `json:"batchId,omitempty"`
-	To        string               `json:"to"`
+	Recipient string               `json:"recipient"`
 	Channel   NotificationChannel  `json:"channel"`
 	Content   string               `json:"content"`
 	Priority  NotificationPriority `json:"priority"`
@@ -68,13 +68,14 @@ type Batch struct {
 
 // OutboxEvent represents an event in the transactional outbox.
 type OutboxEvent struct {
-	ID          uuid.UUID `json:"id"`
-	AggregateID uuid.UUID `json:"aggregateId"`
-	EventType   string    `json:"eventType"`
-	Topic       string    `json:"topic"`
-	Payload     []byte    `json:"payload"`
-	CreatedAt   time.Time `json:"createdAt"`
-	ProcessedAt *time.Time `json:"processedAt,omitempty"`
+	ID             uuid.UUID            `json:"id"`
+	NotificationID uuid.UUID            `json:"notificationId"`
+	Recipient      string               `json:"Recipient"`
+	Channel        NotificationChannel  `json:"channel"`
+	Content        string               `json:"content"`
+	Priority       NotificationPriority `json:"priority"`
+	CreatedAt      time.Time            `json:"createdAt"`
+	ProcessedAt    *time.Time           `json:"processedAt,omitempty"`
 }
 
 // CreateNotificationRequest represents a request to create a notification.
@@ -148,7 +149,7 @@ type ErrorResponse struct {
 func (n *Notification) ToResponse() NotificationResponse {
 	return NotificationResponse{
 		MessageID: n.MessageID,
-		To:        n.To,
+		To:        n.Recipient,
 		Channel:   n.Channel,
 		Content:   n.Content,
 		Priority:  n.Priority,

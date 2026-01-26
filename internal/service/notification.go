@@ -2,11 +2,11 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/notifications-management-api/internal/database"
 	"github.com/notifications-management-api/internal/kafka"
 	"github.com/notifications-management-api/internal/model"
 	"github.com/notifications-management-api/internal/repository"
@@ -14,6 +14,7 @@ import (
 
 // NotificationService handles notification business logic.
 type NotificationService struct {
+	db               *database.PostgresDB
 	notificationRepo *repository.NotificationRepository
 	batchRepo        *repository.BatchRepository
 	outboxRepo       *repository.OutboxRepository
@@ -23,6 +24,7 @@ type NotificationService struct {
 
 // NewNotificationService creates a new NotificationService.
 func NewNotificationService(
+	db *database.PostgresDB,
 	notificationRepo *repository.NotificationRepository,
 	batchRepo *repository.BatchRepository,
 	outboxRepo *repository.OutboxRepository,
@@ -30,6 +32,7 @@ func NewNotificationService(
 	logger *slog.Logger,
 ) *NotificationService {
 	return &NotificationService{
+		db:               db,
 		notificationRepo: notificationRepo,
 		batchRepo:        batchRepo,
 		outboxRepo:       outboxRepo,
@@ -40,12 +43,10 @@ func NewNotificationService(
 
 // Create creates a new notification.
 func (s *NotificationService) Create(ctx context.Context, req model.CreateNotificationRequest) (*model.NotificationResponse, error) {
-	// Validate request
 	if err := req.Validate(); err != nil {
 		return nil, err
 	}
 
-	// Set default priority if not provided
 	if req.Priority == "" {
 		req.Priority = model.PriorityNormal
 	}
@@ -53,7 +54,7 @@ func (s *NotificationService) Create(ctx context.Context, req model.CreateNotifi
 	now := time.Now()
 	notification := &model.Notification{
 		MessageID: uuid.New(),
-		To:        req.To,
+		Recipient: req.To,
 		Channel:   req.Channel,
 		Content:   req.Content,
 		Priority:  req.Priority,
@@ -62,37 +63,56 @@ func (s *NotificationService) Create(ctx context.Context, req model.CreateNotifi
 		UpdatedAt: now,
 	}
 
-	// Create notification in database
-	if err := s.notificationRepo.Create(ctx, notification); err != nil {
-		s.logger.Error("failed to create notification",
+	outboxEvent := &model.OutboxEvent{
+		ID:             uuid.New(),
+		NotificationID: notification.MessageID,
+		Recipient:      notification.Recipient,
+		Channel:        notification.Channel,
+		Content:        notification.Content,
+		Priority:       notification.Priority,
+		CreatedAt:      now,
+	}
+
+	s.logger.Info("starting transaction for notification creation",
+		slog.String("message_id", notification.MessageID.String()),
+	)
+
+	tx, err := s.db.BeginTx(ctx)
+	if err != nil {
+		s.logger.Error("failed to begin transaction", slog.String("error", err.Error()))
+		return nil, err
+	}
+
+	if err = s.notificationRepo.CreateWithTx(ctx, tx, notification); err != nil {
+		tx.Rollback(ctx)
+		s.logger.Warn("transaction rolled back: failed to create notification",
 			slog.String("error", err.Error()),
+			slog.String("message_id", notification.MessageID.String()),
 		)
 		return nil, err
 	}
 
-	// Create outbox event for eventual publishing to Kafka
-	topic := s.kafkaProducer.GetTopicForNotification(notification.Channel, notification.Priority)
-	payload, _ := json.Marshal(notification)
-
-	outboxEvent := &model.OutboxEvent{
-		ID:          uuid.New(),
-		AggregateID: notification.MessageID,
-		EventType:   "notification.created",
-		Topic:       topic,
-		Payload:     payload,
-		CreatedAt:   now,
-	}
-
-	if err := s.outboxRepo.Create(ctx, outboxEvent); err != nil {
-		s.logger.Error("failed to create outbox event",
+	if err = s.outboxRepo.CreateWithTx(ctx, tx, outboxEvent); err != nil {
+		tx.Rollback(ctx)
+		s.logger.Warn("transaction rolled back: failed to create outbox event",
 			slog.String("error", err.Error()),
-			slog.String("notification_id", notification.MessageID.String()),
+			slog.String("message_id", notification.MessageID.String()),
+			slog.String("outbox_id", outboxEvent.ID.String()),
 		)
-		// Note: In a real implementation, this should be in a transaction
+		return nil, err
 	}
 
-	s.logger.Info("notification created",
+	if err = tx.Commit(ctx); err != nil {
+		s.logger.Error("failed to commit transaction",
+			slog.String("error", err.Error()),
+			slog.String("message_id", notification.MessageID.String()),
+		)
+		return nil, err
+	}
+
+	s.logger.Info("transaction committed successfully: notification created",
 		slog.String("message_id", notification.MessageID.String()),
+		slog.String("outbox_id", outboxEvent.ID.String()),
 		slog.String("channel", string(notification.Channel)),
 		slog.String("priority", string(notification.Priority)),
 	)
@@ -113,18 +133,15 @@ func (s *NotificationService) GetByID(ctx context.Context, messageID uuid.UUID) 
 
 // Cancel cancels a pending notification.
 func (s *NotificationService) Cancel(ctx context.Context, messageID uuid.UUID) (*model.NotificationResponse, error) {
-	// Get current notification
 	notification, err := s.notificationRepo.GetByID(ctx, messageID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Only pending notifications can be cancelled
 	if notification.Status != model.StatusPending {
 		return nil, model.ErrCannotCancel
 	}
 
-	// Update status to cancelled
 	if err := s.notificationRepo.UpdateStatus(ctx, messageID, model.StatusCancelled); err != nil {
 		return nil, err
 	}
@@ -132,9 +149,7 @@ func (s *NotificationService) Cancel(ctx context.Context, messageID uuid.UUID) (
 	notification.Status = model.StatusCancelled
 	notification.UpdatedAt = time.Now()
 
-	s.logger.Info("notification cancelled",
-		slog.String("message_id", messageID.String()),
-	)
+	s.logger.Info("notification cancelled", slog.String("message_id", messageID.String()))
 
 	response := notification.ToResponse()
 	return &response, nil
@@ -142,7 +157,6 @@ func (s *NotificationService) Cancel(ctx context.Context, messageID uuid.UUID) (
 
 // List retrieves notifications with filtering and pagination.
 func (s *NotificationService) List(ctx context.Context, filter model.NotificationFilter) (*model.NotificationListResponse, error) {
-	// Set defaults
 	if filter.Page < 1 {
 		filter.Page = 1
 	}
@@ -158,13 +172,11 @@ func (s *NotificationService) List(ctx context.Context, filter model.Notificatio
 		return nil, err
 	}
 
-	// Convert to response format
 	data := make([]model.NotificationResponse, len(notifications))
 	for i, n := range notifications {
 		data[i] = n.ToResponse()
 	}
 
-	// Calculate pagination
 	totalPages := totalCount / filter.PageSize
 	if totalCount%filter.PageSize > 0 {
 		totalPages++
@@ -183,7 +195,6 @@ func (s *NotificationService) List(ctx context.Context, filter model.Notificatio
 
 // CreateBatch creates multiple notifications in a batch.
 func (s *NotificationService) CreateBatch(ctx context.Context, req model.CreateNotificationBatchRequest) (*model.BatchResponse, error) {
-	// Validate batch size
 	if len(req.Notifications) == 0 {
 		return nil, model.ErrEmptyBatch
 	}
@@ -191,7 +202,6 @@ func (s *NotificationService) CreateBatch(ctx context.Context, req model.CreateN
 		return nil, model.ErrBatchTooLarge
 	}
 
-	// Validate all notifications first
 	for _, notif := range req.Notifications {
 		if err := notif.Validate(); err != nil {
 			return nil, err
@@ -201,7 +211,6 @@ func (s *NotificationService) CreateBatch(ctx context.Context, req model.CreateN
 	now := time.Now()
 	batchID := uuid.New()
 
-	// Create batch record
 	batch := &model.Batch{
 		BatchID:      batchID,
 		TotalCount:   len(req.Notifications),
@@ -211,14 +220,28 @@ func (s *NotificationService) CreateBatch(ctx context.Context, req model.CreateN
 		CreatedAt:    now,
 	}
 
-	if err := s.batchRepo.Create(ctx, batch); err != nil {
+	s.logger.Info("starting transaction for batch creation",
+		slog.String("batch_id", batchID.String()),
+		slog.Int("total_count", len(req.Notifications)),
+	)
+
+	tx, err := s.db.BeginTx(ctx)
+	if err != nil {
+		s.logger.Error("failed to begin transaction", slog.String("error", err.Error()))
 		return nil, err
 	}
 
-	// Create all notifications
+	if err = s.batchRepo.CreateWithTx(ctx, tx, batch); err != nil {
+		tx.Rollback(ctx)
+		s.logger.Warn("transaction rolled back: failed to create batch",
+			slog.String("error", err.Error()),
+			slog.String("batch_id", batchID.String()),
+		)
+		return nil, err
+	}
+
 	notifications := make([]model.NotificationResponse, 0, len(req.Notifications))
 	for _, notifReq := range req.Notifications {
-		// Set default priority if not provided
 		if notifReq.Priority == "" {
 			notifReq.Priority = model.PriorityNormal
 		}
@@ -226,7 +249,7 @@ func (s *NotificationService) CreateBatch(ctx context.Context, req model.CreateN
 		notification := &model.Notification{
 			MessageID: uuid.New(),
 			BatchID:   &batchID,
-			To:        notifReq.To,
+			Recipient: notifReq.To,
 			Channel:   notifReq.Channel,
 			Content:   notifReq.Content,
 			Priority:  notifReq.Priority,
@@ -235,38 +258,48 @@ func (s *NotificationService) CreateBatch(ctx context.Context, req model.CreateN
 			UpdatedAt: now,
 		}
 
-		if err := s.notificationRepo.Create(ctx, notification); err != nil {
-			s.logger.Error("failed to create notification in batch",
+		if err = s.notificationRepo.CreateWithTx(ctx, tx, notification); err != nil {
+			tx.Rollback(ctx)
+			s.logger.Warn("transaction rolled back: failed to create notification in batch",
 				slog.String("error", err.Error()),
 				slog.String("batch_id", batchID.String()),
+				slog.String("message_id", notification.MessageID.String()),
 			)
-			continue
+			return nil, err
 		}
-
-		// Create outbox event
-		topic := s.kafkaProducer.GetTopicForNotification(notification.Channel, notification.Priority)
-		payload, _ := json.Marshal(notification)
 
 		outboxEvent := &model.OutboxEvent{
-			ID:          uuid.New(),
-			AggregateID: notification.MessageID,
-			EventType:   "notification.created",
-			Topic:       topic,
-			Payload:     payload,
-			CreatedAt:   now,
+			ID:             uuid.New(),
+			NotificationID: notification.MessageID,
+			Recipient:      notification.Recipient,
+			Channel:        notification.Channel,
+			Content:        notification.Content,
+			Priority:       notification.Priority,
+			CreatedAt:      now,
 		}
 
-		if err := s.outboxRepo.Create(ctx, outboxEvent); err != nil {
-			s.logger.Error("failed to create outbox event",
+		if err = s.outboxRepo.CreateWithTx(ctx, tx, outboxEvent); err != nil {
+			tx.Rollback(ctx)
+			s.logger.Warn("transaction rolled back: failed to create outbox event in batch",
 				slog.String("error", err.Error()),
-				slog.String("notification_id", notification.MessageID.String()),
+				slog.String("batch_id", batchID.String()),
+				slog.String("message_id", notification.MessageID.String()),
 			)
+			return nil, err
 		}
 
 		notifications = append(notifications, notification.ToResponse())
 	}
 
-	s.logger.Info("batch created",
+	if err = tx.Commit(ctx); err != nil {
+		s.logger.Error("failed to commit transaction",
+			slog.String("error", err.Error()),
+			slog.String("batch_id", batchID.String()),
+		)
+		return nil, err
+	}
+
+	s.logger.Info("transaction committed successfully: batch created",
 		slog.String("batch_id", batchID.String()),
 		slog.Int("total_count", len(req.Notifications)),
 	)
@@ -289,13 +322,11 @@ func (s *NotificationService) GetBatchByID(ctx context.Context, batchID uuid.UUI
 		return nil, err
 	}
 
-	// Get all notifications in the batch
 	notifications, err := s.notificationRepo.GetByBatchID(ctx, batchID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Convert to response format
 	notificationResponses := make([]model.NotificationResponse, len(notifications))
 	for i, n := range notifications {
 		notificationResponses[i] = n.ToResponse()

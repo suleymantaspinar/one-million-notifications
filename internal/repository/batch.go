@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/notifications-management-api/internal/database"
 	"github.com/notifications-management-api/internal/model"
 )
 
@@ -23,11 +24,16 @@ func NewBatchRepository(pool *pgxpool.Pool) *BatchRepository {
 
 // Create creates a new batch.
 func (r *BatchRepository) Create(ctx context.Context, batch *model.Batch) error {
+	return r.CreateWithTx(ctx, r.pool, batch)
+}
+
+// CreateWithTx creates a new batch within a transaction.
+func (r *BatchRepository) CreateWithTx(ctx context.Context, tx database.DBTX, batch *model.Batch) error {
 	query := `
 		INSERT INTO batches (batch_id, total_count, success_count, failure_count, status, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
 	`
-	_, err := r.pool.Exec(ctx, query,
+	_, err := tx.Exec(ctx, query,
 		batch.BatchID,
 		batch.TotalCount,
 		batch.SuccessCount,
@@ -102,28 +108,6 @@ func (r *BatchRepository) UpdateStatus(ctx context.Context, batchID uuid.UUID, s
 	return nil
 }
 
-// IncrementSuccessCount atomically increments the success count.
-func (r *BatchRepository) IncrementSuccessCount(ctx context.Context, batchID uuid.UUID) error {
-	query := `
-		UPDATE batches
-		SET success_count = success_count + 1
-		WHERE batch_id = $1
-	`
-	_, err := r.pool.Exec(ctx, query, batchID)
-	return err
-}
-
-// IncrementFailureCount atomically increments the failure count.
-func (r *BatchRepository) IncrementFailureCount(ctx context.Context, batchID uuid.UUID) error {
-	query := `
-		UPDATE batches
-		SET failure_count = failure_count + 1
-		WHERE batch_id = $1
-	`
-	_, err := r.pool.Exec(ctx, query, batchID)
-	return err
-}
-
 // OutboxRepository handles outbox event persistence.
 type OutboxRepository struct {
 	pool *pgxpool.Pool
@@ -136,16 +120,22 @@ func NewOutboxRepository(pool *pgxpool.Pool) *OutboxRepository {
 
 // Create creates a new outbox event.
 func (r *OutboxRepository) Create(ctx context.Context, event *model.OutboxEvent) error {
+	return r.CreateWithTx(ctx, r.pool, event)
+}
+
+// CreateWithTx creates a new outbox event within a transaction.
+func (r *OutboxRepository) CreateWithTx(ctx context.Context, tx database.DBTX, event *model.OutboxEvent) error {
 	query := `
-		INSERT INTO outbox_events (id, aggregate_id, event_type, topic, payload, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO outbox_events (id, notification_id, recipient, channel, content, priority, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 	`
-	_, err := r.pool.Exec(ctx, query,
+	_, err := tx.Exec(ctx, query,
 		event.ID,
-		event.AggregateID,
-		event.EventType,
-		event.Topic,
-		event.Payload,
+		event.NotificationID,
+		event.Recipient,
+		event.Channel,
+		event.Content,
+		event.Priority,
 		event.CreatedAt,
 	)
 	if err != nil {
@@ -157,7 +147,7 @@ func (r *OutboxRepository) Create(ctx context.Context, event *model.OutboxEvent)
 // GetUnprocessed retrieves unprocessed outbox events.
 func (r *OutboxRepository) GetUnprocessed(ctx context.Context, limit int) ([]model.OutboxEvent, error) {
 	query := `
-		SELECT id, aggregate_id, event_type, topic, payload, created_at, processed_at
+		SELECT id, notification_id, recipient, channel, content, priority, created_at, processed_at
 		FROM outbox_events
 		WHERE processed_at IS NULL
 		ORDER BY created_at ASC
@@ -174,10 +164,11 @@ func (r *OutboxRepository) GetUnprocessed(ctx context.Context, limit int) ([]mod
 		var e model.OutboxEvent
 		err := rows.Scan(
 			&e.ID,
-			&e.AggregateID,
-			&e.EventType,
-			&e.Topic,
-			&e.Payload,
+			&e.NotificationID,
+			&e.Recipient,
+			&e.Channel,
+			&e.Content,
+			&e.Priority,
 			&e.CreatedAt,
 			&e.ProcessedAt,
 		)

@@ -24,10 +24,11 @@ CREATE TABLE IF NOT EXISTS batches (
 -- Transactional outbox table for reliable event publishing
 CREATE TABLE IF NOT EXISTS outbox_events (
     id UUID PRIMARY KEY,
-    aggregate_id UUID NOT NULL,
-    event_type VARCHAR(100) NOT NULL,
-    topic VARCHAR(255) NOT NULL,
-    payload JSONB NOT NULL,
+    notification_id UUID NOT NULL,
+    recipient VARCHAR(255) NOT NULL,
+    channel VARCHAR(10) NOT NULL CHECK (channel IN ('email', 'sms', 'push')),
+    content TEXT NOT NULL,
+    priority VARCHAR(10) NOT NULL CHECK (priority IN ('low', 'normal', 'high')),
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     processed_at TIMESTAMP WITH TIME ZONE
 );
@@ -46,11 +47,16 @@ CREATE INDEX IF NOT EXISTS idx_batches_created_at ON batches(created_at);
 -- Indexes for outbox_events table
 CREATE INDEX IF NOT EXISTS idx_outbox_events_processed_at ON outbox_events(processed_at) WHERE processed_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_outbox_events_created_at ON outbox_events(created_at);
+CREATE INDEX IF NOT EXISTS idx_outbox_events_notification_id ON outbox_events(notification_id);
 
--- Foreign key constraint
-ALTER TABLE notifications 
+-- Foreign key constraints
+ALTER TABLE notifications
     ADD CONSTRAINT fk_notifications_batch 
     FOREIGN KEY (batch_id) REFERENCES batches(batch_id) ON DELETE SET NULL;
+
+ALTER TABLE outbox_events
+    ADD CONSTRAINT fk_outbox_notification
+    FOREIGN KEY (notification_id) REFERENCES notifications(message_id) ON DELETE CASCADE;
 
 -- Function to update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
