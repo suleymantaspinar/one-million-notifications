@@ -1,0 +1,464 @@
+openapi: 3.0.3
+info:
+  title: Notification Management API
+  version: 1.0.0
+  description: Simple notification management system supporting creation, status tracking, and cancellation
+  contact:
+    name: API Support
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080/v1
+    description: Local development server
+  - url: https://api.example.com/v1
+    description: Production server
+
+tags:
+  - name: Notifications
+    description: Notification management operations
+  - name: Health
+    description: Health check endpoints
+
+paths:
+  /notifications:
+    post:
+      summary: Create a single notification
+      operationId: createNotification
+      tags:
+        - Notifications
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNotificationRequest'
+            examples:
+              email:
+                summary: Email notification
+                value:
+                  to: "user@example.com"
+                  channel: "email"
+                  content: "Your order has been shipped"
+                  priority: "normal"
+              sms:
+                summary: SMS notification
+                value:
+                  to: "+1234567890"
+                  channel: "sms"
+                  content: "Your verification code is 123456"
+                  priority: "high"
+              push:
+                summary: Push notification
+                value:
+                  to: "device_token_abc123"
+                  channel: "push"
+                  content: "You have a new message"
+                  priority: "normal"
+      responses:
+        '201':
+          description: Notification created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    get:
+      summary: List notifications with filtering and pagination
+      operationId: listNotifications
+      tags:
+        - Notifications
+      parameters:
+        - name: status
+          in: query
+          description: Filter by notification status
+          schema:
+            $ref: '#/components/schemas/NotificationStatus'
+        - name: channel
+          in: query
+          description: Filter by notification channel
+          schema:
+            $ref: '#/components/schemas/NotificationChannel'
+        - name: startDate
+          in: query
+          description: Filter notifications created after this date
+          schema:
+            type: string
+            format: date-time
+            example: "2024-01-01T00:00:00Z"
+        - name: endDate
+          in: query
+          description: Filter notifications created before this date
+          schema:
+            type: string
+            format: date-time
+            example: "2024-12-31T23:59:59Z"
+        - name: page
+          in: query
+          description: Page number for pagination
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: pageSize
+          in: query
+          description: Number of items per page
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: List of notifications
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /notifications/batch:
+    post:
+      summary: Create multiple notifications in batch
+      operationId: createNotificationBatch
+      tags:
+        - Notifications
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNotificationBatchRequest'
+            examples:
+              mixedBatch:
+                summary: Mixed channel batch
+                value:
+                  notifications:
+                    - to: "user1@example.com"
+                      channel: "email"
+                      content: "Welcome to our service!"
+                      priority: "normal"
+                    - to: "+1234567890"
+                      channel: "sms"
+                      content: "Your code is 123456"
+                      priority: "high"
+                    - to: "device_token_xyz"
+                      channel: "push"
+                      content: "New message received"
+                      priority: "low"
+      responses:
+        '201':
+          description: Batch created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /notifications/{messageId}:
+    get:
+      summary: Get notification status by message ID
+      operationId: getNotificationById
+      tags:
+        - Notifications
+      parameters:
+        - name: messageId
+          in: path
+          required: true
+          description: Unique identifier of the notification
+          schema:
+            type: string
+            format: uuid
+            example: "550e8400-e29b-41d4-a716-446655440000"
+      responses:
+        '200':
+          description: Notification details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /notifications/{messageId}/cancel:
+    post:
+      summary: Cancel a pending notification
+      operationId: cancelNotification
+      tags:
+        - Notifications
+      parameters:
+        - name: messageId
+          in: path
+          required: true
+          description: Unique identifier of the notification to cancel
+          schema:
+            type: string
+            format: uuid
+            example: "550e8400-e29b-41d4-a716-446655440000"
+      responses:
+        '200':
+          description: Notification cancelled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /notifications/batches/{batchId}:
+    get:
+      summary: Get batch status by batch ID
+      operationId: getBatchById
+      tags:
+        - Notifications
+      parameters:
+        - name: batchId
+          in: path
+          required: true
+          description: Unique identifier of the batch
+          schema:
+            type: string
+            format: uuid
+            example: "550e8400-e29b-41d4-a716-446655440000"
+      responses:
+        '200':
+          description: Batch details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  schemas:
+    CreateNotificationRequest:
+      type: object
+      required:
+        - to
+        - channel
+        - content
+      properties:
+        to:
+          type: string
+          description: Email, phone number, or device token based on channel
+          example: "user@example.com"
+        channel:
+          $ref: '#/components/schemas/NotificationChannel'
+        content:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: The notification message content
+          example: "Your order has been shipped"
+        priority:
+          $ref: '#/components/schemas/NotificationPriority'
+
+    CreateNotificationBatchRequest:
+      type: object
+      required:
+        - notifications
+      properties:
+        notifications:
+          type: array
+          description: List of notifications to create
+          minItems: 1
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/CreateNotificationRequest'
+
+    NotificationResponse:
+      type: object
+      properties:
+        messageId:
+          type: string
+          format: uuid
+          description: Unique identifier for tracking this notification
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        to:
+          type: string
+          description: Recipient address
+          example: "user@example.com"
+        channel:
+          $ref: '#/components/schemas/NotificationChannel'
+        content:
+          type: string
+          description: The notification message content
+          example: "Your order has been shipped"
+        priority:
+          $ref: '#/components/schemas/NotificationPriority'
+        status:
+          $ref: '#/components/schemas/NotificationStatus'
+        createdAt:
+          type: string
+          format: date-time
+          description: Timestamp when the notification was created
+          example: "2024-01-15T10:30:00Z"
+        updatedAt:
+          type: string
+          format: date-time
+          description: Timestamp when the notification was last updated
+          example: "2024-01-15T10:30:00Z"
+
+    BatchResponse:
+      type: object
+      properties:
+        batchId:
+          type: string
+          format: uuid
+          description: Unique identifier for tracking this batch
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        totalCount:
+          type: integer
+          description: Total number of notifications in the batch
+          example: 100
+        successCount:
+          type: integer
+          description: Number of successfully processed notifications
+          example: 95
+        failureCount:
+          type: integer
+          description: Number of failed notifications
+          example: 5
+        status:
+          $ref: '#/components/schemas/BatchStatus'
+        notifications:
+          type: array
+          description: List of notifications in this batch
+          items:
+            $ref: '#/components/schemas/NotificationResponse'
+        createdAt:
+          type: string
+          format: date-time
+          description: Timestamp when the batch was created
+          example: "2024-01-15T10:30:00Z"
+
+    NotificationListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          description: List of notifications
+          items:
+            $ref: '#/components/schemas/NotificationResponse'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+          description: Current page number
+          example: 1
+        pageSize:
+          type: integer
+          description: Number of items per page
+          example: 20
+        totalPages:
+          type: integer
+          description: Total number of pages
+          example: 5
+        totalCount:
+          type: integer
+          description: Total number of items
+          example: 100
+
+    NotificationChannel:
+      type: string
+      enum: [email, sms, push]
+      description: The delivery channel for the notification
+      example: "email"
+
+    NotificationPriority:
+      type: string
+      enum: [low, normal, high]
+      default: normal
+      description: Priority level affects which Kafka topic the notification is routed to
+      example: "normal"
+
+    NotificationStatus:
+      type: string
+      enum: [pending, sent, failed, cancelled]
+      description: Current status of the notification
+      example: "pending"
+
+    BatchStatus:
+      type: string
+      enum: [processing, completed, failed]
+      description: Current status of the batch
+      example: "processing"
+
+    Error:
+      type: object
+      properties:
+        code:
+          type: string
+          description: Error code for programmatic handling
+          example: "INVALID_REQUEST"
+        message:
+          type: string
+          description: Human-readable error message
+          example: "Invalid channel: must be email, sms, or push"
+        messageId:
+          type: string
+          format: uuid
+          description: Request tracking ID for support
+          example: "550e8400-e29b-41d4-a716-446655440000"
+
+  responses:
+    BadRequest:
+      description: Bad request - invalid input
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            invalidChannel:
+              summary: Invalid channel
+              value:
+                code: "INVALID_REQUEST"
+                message: "Invalid channel: must be email, sms, or push"
+            missingContent:
+              summary: Missing content
+              value:
+                code: "INVALID_REQUEST"
+                message: "content is required"
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: "NOT_FOUND"
+            message: "Notification not found"
+
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: "INTERNAL_ERROR"
+            message: "An internal error occurred"
