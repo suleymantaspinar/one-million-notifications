@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS outbox_events (
     channel VARCHAR(10) NOT NULL CHECK (channel IN ('email', 'sms', 'push')),
     content TEXT NOT NULL,
     priority VARCHAR(10) NOT NULL CHECK (priority IN ('low', 'normal', 'high')),
+    status VARCHAR(10) NOT NULL DEFAULT 'ready' CHECK (status IN ('ready', 'sent', 'failed')),
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     processed_at TIMESTAMP WITH TIME ZONE
 );
@@ -45,7 +46,7 @@ CREATE INDEX IF NOT EXISTS idx_batches_status ON batches(status);
 CREATE INDEX IF NOT EXISTS idx_batches_created_at ON batches(created_at);
 
 -- Indexes for outbox_events table
-CREATE INDEX IF NOT EXISTS idx_outbox_events_processed_at ON outbox_events(processed_at) WHERE processed_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_outbox_events_status ON outbox_events(status) WHERE status = 'ready';
 CREATE INDEX IF NOT EXISTS idx_outbox_events_created_at ON outbox_events(created_at);
 CREATE INDEX IF NOT EXISTS idx_outbox_events_notification_id ON outbox_events(notification_id);
 

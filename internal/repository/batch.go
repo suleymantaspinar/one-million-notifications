@@ -126,8 +126,8 @@ func (r *OutboxRepository) Create(ctx context.Context, event *model.OutboxEvent)
 // CreateWithTx creates a new outbox event within a transaction.
 func (r *OutboxRepository) CreateWithTx(ctx context.Context, tx database.DBTX, event *model.OutboxEvent) error {
 	query := `
-		INSERT INTO outbox_events (id, notification_id, recipient, channel, content, priority, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO outbox_events (id, notification_id, recipient, channel, content, priority, status, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	`
 	_, err := tx.Exec(ctx, query,
 		event.ID,
@@ -136,6 +136,7 @@ func (r *OutboxRepository) CreateWithTx(ctx context.Context, tx database.DBTX, e
 		event.Channel,
 		event.Content,
 		event.Priority,
+		event.Status,
 		event.CreatedAt,
 	)
 	if err != nil {
@@ -144,16 +145,16 @@ func (r *OutboxRepository) CreateWithTx(ctx context.Context, tx database.DBTX, e
 	return nil
 }
 
-// GetUnprocessed retrieves unprocessed outbox events.
+// GetUnprocessed retrieves unprocessed outbox events (status = 'ready').
 func (r *OutboxRepository) GetUnprocessed(ctx context.Context, limit int) ([]model.OutboxEvent, error) {
 	query := `
-		SELECT id, notification_id, recipient, channel, content, priority, created_at, processed_at
+		SELECT id, notification_id, recipient, channel, content, priority, status, created_at, processed_at
 		FROM outbox_events
-		WHERE processed_at IS NULL
+		WHERE status = $1
 		ORDER BY created_at ASC
-		LIMIT $1
+		LIMIT $2
 	`
-	rows, err := r.pool.Query(ctx, query, limit)
+	rows, err := r.pool.Query(ctx, query, model.OutboxStatusReady, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get unprocessed outbox events: %w", err)
 	}
@@ -169,6 +170,7 @@ func (r *OutboxRepository) GetUnprocessed(ctx context.Context, limit int) ([]mod
 			&e.Channel,
 			&e.Content,
 			&e.Priority,
+			&e.Status,
 			&e.CreatedAt,
 			&e.ProcessedAt,
 		)
@@ -181,13 +183,24 @@ func (r *OutboxRepository) GetUnprocessed(ctx context.Context, limit int) ([]mod
 	return events, nil
 }
 
-// MarkProcessed marks an outbox event as processed.
+// MarkProcessed marks an outbox event as processed (status = 'sent').
 func (r *OutboxRepository) MarkProcessed(ctx context.Context, id uuid.UUID) error {
 	query := `
 		UPDATE outbox_events
-		SET processed_at = $2
+		SET status = $2, processed_at = $3
 		WHERE id = $1
 	`
-	_, err := r.pool.Exec(ctx, query, id, time.Now())
+	_, err := r.pool.Exec(ctx, query, id, model.OutboxStatusSent, time.Now())
+	return err
+}
+
+// MarkFailed marks an outbox event as failed (status = 'failed').
+func (r *OutboxRepository) MarkFailed(ctx context.Context, id uuid.UUID) error {
+	query := `
+		UPDATE outbox_events
+		SET status = $2, processed_at = $3
+		WHERE id = $1
+	`
+	_, err := r.pool.Exec(ctx, query, id, model.OutboxStatusFailed, time.Now())
 	return err
 }

@@ -43,6 +43,15 @@ const (
 	BatchStatusFailed     BatchStatus = "failed"
 )
 
+// OutboxEventStatus represents the current status of an outbox event.
+type OutboxEventStatus string
+
+const (
+	OutboxStatusReady  OutboxEventStatus = "ready"
+	OutboxStatusSent   OutboxEventStatus = "sent"
+	OutboxStatusFailed OutboxEventStatus = "failed"
+)
+
 // Notification represents a notification entity.
 type Notification struct {
 	MessageID uuid.UUID            `json:"messageId"`
@@ -70,10 +79,11 @@ type Batch struct {
 type OutboxEvent struct {
 	ID             uuid.UUID            `json:"id"`
 	NotificationID uuid.UUID            `json:"notificationId"`
-	Recipient      string               `json:"Recipient"`
+	Recipient      string               `json:"recipient"`
 	Channel        NotificationChannel  `json:"channel"`
 	Content        string               `json:"content"`
 	Priority       NotificationPriority `json:"priority"`
+	Status         OutboxEventStatus    `json:"status"`
 	CreatedAt      time.Time            `json:"createdAt"`
 	ProcessedAt    *time.Time           `json:"processedAt,omitempty"`
 }

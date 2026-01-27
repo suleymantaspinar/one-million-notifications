@@ -70,6 +70,7 @@ func (s *NotificationService) Create(ctx context.Context, req model.CreateNotifi
 		Channel:        notification.Channel,
 		Content:        notification.Content,
 		Priority:       notification.Priority,
+		Status:         model.OutboxStatusReady,
 		CreatedAt:      now,
 	}
 
@@ -275,6 +276,7 @@ func (s *NotificationService) CreateBatch(ctx context.Context, req model.CreateN
 			Channel:        notification.Channel,
 			Content:        notification.Content,
 			Priority:       notification.Priority,
+			Status:         model.OutboxStatusReady,
 			CreatedAt:      now,
 		}
 
