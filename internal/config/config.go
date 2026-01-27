@@ -11,6 +11,14 @@ type Config struct {
 	Server   ServerConfig
 	Database DatabaseConfig
 	Kafka    KafkaConfig
+	Outbox   OutboxConfig
+}
+
+// OutboxConfig holds outbox cron configuration.
+type OutboxConfig struct {
+	PollInterval time.Duration
+	BatchSize    int
+	MaxRetries   int
 }
 
 // ServerConfig holds HTTP server configuration.
@@ -92,6 +100,11 @@ func Load() *Config {
 				PushLow:      getEnv("KAFKA_TOPIC_PUSH_LOW", "notifications.push.low"),
 				DeadLetter:   getEnv("KAFKA_TOPIC_DLQ", "notifications.dlq"),
 			},
+		},
+		Outbox: OutboxConfig{
+			PollInterval: getEnvAsDuration("OUTBOX_POLL_INTERVAL", 5*time.Second),
+			BatchSize:    getEnvAsInt("OUTBOX_BATCH_SIZE", 100),
+			MaxRetries:   getEnvAsInt("OUTBOX_MAX_RETRIES", 3),
 		},
 	}
 }
