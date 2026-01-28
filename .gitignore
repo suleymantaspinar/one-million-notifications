@@ -12,6 +12,7 @@
 
 # Test binary
 *.test
+.cursor
 
 # Coverage
 *.out
