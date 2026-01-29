@@ -42,18 +42,13 @@ type ConsumerConfig struct {
 	// Queue size per worker pool
 	QueueSize int
 
-	// Rate limiting per channel (max requests per interval)
-	EmailRateMax int
-	SMSRateMax   int
-	PushRateMax  int
-
-	// Rate limiting interval
-	RateLimitInterval time.Duration
+	// Rate limiting: maximum messages per second per channel
+	RateLimitPerSecond int
 
 	// Retry configuration
-	MaxRetries     int
-	InitialBackoff time.Duration
-	MaxBackoff     time.Duration
+	MaxRetries        int
+	InitialBackoff    time.Duration
+	MaxBackoff        time.Duration
 	BackoffMultiplier float64
 
 	// Idempotency TTL (how long to remember processed messages)
@@ -150,23 +145,20 @@ func Load() *Config {
 			MaxRetries:   getEnvAsInt("OUTBOX_MAX_RETRIES", 3),
 		},
 		Consumer: ConsumerConfig{
-			ConsumerGroup:     getEnv("CONSUMER_GROUP", "notification-consumer"),
-			WebhookURL:        getEnv("WEBHOOK_URL", "https://webhook.site/eb377dd8-129d-4fdd-9a83-e5f83314141d"),
-			HTTPTimeout:       getEnvAsDuration("HTTP_TIMEOUT", 30*time.Second),
-			EmailWorkers:      getEnvAsInt("EMAIL_WORKERS", 5),
-			SMSWorkers:        getEnvAsInt("SMS_WORKERS", 5),
-			PushWorkers:       getEnvAsInt("PUSH_WORKERS", 5),
-			QueueSize:         getEnvAsInt("QUEUE_SIZE", 100),
-			EmailRateMax:      getEnvAsInt("EMAIL_RATE_MAX", 100),
-			SMSRateMax:        getEnvAsInt("SMS_RATE_MAX", 50),
-			PushRateMax:       getEnvAsInt("PUSH_RATE_MAX", 200),
-			RateLimitInterval: getEnvAsDuration("RATE_LIMIT_INTERVAL", 1*time.Second),
-			MaxRetries:        getEnvAsInt("MAX_RETRIES", 3),
-			InitialBackoff:    getEnvAsDuration("INITIAL_BACKOFF", 1*time.Second),
-			MaxBackoff:        getEnvAsDuration("MAX_BACKOFF", 30*time.Second),
-			BackoffMultiplier: getEnvAsFloat("BACKOFF_MULTIPLIER", 2.0),
-			IdempotencyTTL:    getEnvAsDuration("IDEMPOTENCY_TTL", 24*time.Hour),
-			ShutdownTimeout:   getEnvAsDuration("SHUTDOWN_TIMEOUT", 30*time.Second),
+			ConsumerGroup:      getEnv("CONSUMER_GROUP", "notification-consumer"),
+			WebhookURL:         getEnv("WEBHOOK_URL", "https://webhook.site/eb377dd8-129d-4fdd-9a83-e5f83314141d"),
+			HTTPTimeout:        getEnvAsDuration("HTTP_TIMEOUT", 30*time.Second),
+			EmailWorkers:       getEnvAsInt("EMAIL_WORKERS", 5),
+			SMSWorkers:         getEnvAsInt("SMS_WORKERS", 5),
+			PushWorkers:        getEnvAsInt("PUSH_WORKERS", 5),
+			QueueSize:          getEnvAsInt("QUEUE_SIZE", 100),
+			RateLimitPerSecond: getEnvAsInt("RATE_LIMIT_PER_SECOND", 100), // 100 msg/sec per channel
+			MaxRetries:         getEnvAsInt("MAX_RETRIES", 3),
+			InitialBackoff:     getEnvAsDuration("INITIAL_BACKOFF", 1*time.Second),
+			MaxBackoff:         getEnvAsDuration("MAX_BACKOFF", 30*time.Second),
+			BackoffMultiplier:  getEnvAsFloat("BACKOFF_MULTIPLIER", 2.0),
+			IdempotencyTTL:     getEnvAsDuration("IDEMPOTENCY_TTL", 24*time.Hour),
+			ShutdownTimeout:    getEnvAsDuration("SHUTDOWN_TIMEOUT", 30*time.Second),
 		},
 	}
 }

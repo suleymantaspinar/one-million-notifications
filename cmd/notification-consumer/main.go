@@ -81,18 +81,26 @@ func main() {
 	pushSender := consumer.NewPushSender(cfg.Consumer.WebhookURL, cfg.Consumer.HTTPTimeout, logger)
 
 	// ==========================================================================
-	// Create Rate Limiters (one per channel)
+	// Create Rate Limiters with Worker Pool Pattern (100 msg/sec per channel)
 	// ==========================================================================
 
-	smsRateLimiter := consumer.NewRateLimiter(cfg.Consumer.SMSRateMax, cfg.Consumer.RateLimitInterval, logger)
-	emailRateLimiter := consumer.NewRateLimiter(cfg.Consumer.EmailRateMax, cfg.Consumer.RateLimitInterval, logger)
-	pushRateLimiter := consumer.NewRateLimiter(cfg.Consumer.PushRateMax, cfg.Consumer.RateLimitInterval, logger)
+	rateLimitConfig := consumer.RateLimiterConfig{
+		MaxPerSecond: cfg.Consumer.RateLimitPerSecond,
+		BurstSize:    cfg.Consumer.RateLimitPerSecond, // No burst beyond rate limit
+	}
 
-	logger.Info("rate limiters configured",
-		slog.Int("email_max", cfg.Consumer.EmailRateMax),
-		slog.Int("sms_max", cfg.Consumer.SMSRateMax),
-		slog.Int("push_max", cfg.Consumer.PushRateMax),
-		slog.Duration("interval", cfg.Consumer.RateLimitInterval),
+	// Create rate limiters for each channel
+	smsRateLimiter := consumer.NewRateLimiter(rateLimitConfig, logger.With(slog.String("channel", "sms")))
+	emailRateLimiter := consumer.NewRateLimiter(rateLimitConfig, logger.With(slog.String("channel", "email")))
+	pushRateLimiter := consumer.NewRateLimiter(rateLimitConfig, logger.With(slog.String("channel", "push")))
+
+	// Start rate limiters (begins token generation)
+	smsRateLimiter.Start()
+	emailRateLimiter.Start()
+	pushRateLimiter.Start()
+
+	logger.Info("rate limiters started with worker pool pattern",
+		slog.Int("max_per_second", cfg.Consumer.RateLimitPerSecond),
 	)
 
 	// ==========================================================================
@@ -246,8 +254,14 @@ func main() {
 		}
 	}
 
-	// Phase 3: Close connections
-	logger.Info("phase 3: closing connections...")
+	// Phase 3: Stop rate limiters
+	logger.Info("phase 3: stopping rate limiters...")
+	smsRateLimiter.Stop()
+	emailRateLimiter.Stop()
+	pushRateLimiter.Stop()
+
+	// Phase 4: Close connections
+	logger.Info("phase 4: closing connections...")
 
 	if err := kafkaConsumer.Close(); err != nil {
 		logger.Error("error closing Kafka consumer", slog.String("error", err.Error()))

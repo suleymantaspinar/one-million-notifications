@@ -184,11 +184,8 @@ services:
       - SMS_WORKERS=5
       - PUSH_WORKERS=5
       - QUEUE_SIZE=100
-      # Rate limiting per channel (max requests per interval)
-      - EMAIL_RATE_MAX=100
-      - SMS_RATE_MAX=50
-      - PUSH_RATE_MAX=200
-      - RATE_LIMIT_INTERVAL=1s
+      # Rate limiting: max 100 messages per second per channel
+      - RATE_LIMIT_PER_SECOND=100
       # Retry settings
       - MAX_RETRIES=3
       - INITIAL_BACKOFF=1s
