@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -11,14 +12,32 @@ import (
 	"github.com/notifications-management-api/internal/model"
 )
 
+// ErrOutboxEventNotFound is returned when an outbox event is not found.
+var ErrOutboxEventNotFound = errors.New("outbox event not found")
+
+// TimeProvider allows injecting time for testing.
+type TimeProvider func() time.Time
+
 // OutboxRepository handles outbox event persistence.
 type OutboxRepository struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	nowFunc TimeProvider
 }
 
 // NewOutboxRepository creates a new OutboxRepository.
 func NewOutboxRepository(pool *pgxpool.Pool) *OutboxRepository {
-	return &OutboxRepository{pool: pool}
+	return &OutboxRepository{
+		pool:    pool,
+		nowFunc: time.Now,
+	}
+}
+
+// NewOutboxRepositoryWithTime creates a new OutboxRepository with custom time provider (for testing).
+func NewOutboxRepositoryWithTime(pool *pgxpool.Pool, nowFunc TimeProvider) *OutboxRepository {
+	return &OutboxRepository{
+		pool:    pool,
+		nowFunc: nowFunc,
+	}
 }
 
 // Create creates a new outbox event.
@@ -28,10 +47,9 @@ func (r *OutboxRepository) Create(ctx context.Context, event *model.OutboxEvent)
 
 // CreateWithTx creates a new outbox event within a transaction.
 func (r *OutboxRepository) CreateWithTx(ctx context.Context, tx database.DBTX, event *model.OutboxEvent) error {
-	query := `
-		INSERT INTO outbox_events (id, notification_id, recipient, channel, content, priority, status, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`
+	query := `INSERT INTO outbox_events (id, notification_id, recipient, channel, content, priority, status, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+
 	_, err := tx.Exec(ctx, query,
 		event.ID,
 		event.NotificationID,
@@ -48,25 +66,24 @@ func (r *OutboxRepository) CreateWithTx(ctx context.Context, tx database.DBTX, e
 	return nil
 }
 
-// GetUnprocessed retrieves unprocessed events with retry count lower than maxRetries.
-func (r *OutboxRepository) GetUnprocessed(ctx context.Context, limit, maxRetries int) ([]model.OutboxEvent, error) {
-	query := `
-		SELECT id, notification_id, recipient, channel, content, priority, status, retry_count, created_at, processed_at
+// GetUnprocessed retrieves unprocessed events (status = 'ready').
+func (r *OutboxRepository) GetUnprocessed(ctx context.Context, limit int) ([]model.OutboxEvent, error) {
+	query := `SELECT id, notification_id, recipient, channel, content, priority, status, created_at, processed_at
 		FROM outbox_events
-		WHERE status = $1 AND retry_count < $2
+		WHERE status = $1
 		ORDER BY created_at ASC
-		LIMIT $3
-	`
-	rows, err := r.pool.Query(ctx, query, model.OutboxStatusReady, maxRetries, limit)
+		LIMIT $2`
+
+	rows, err := r.pool.Query(ctx, query, model.OutboxStatusReady, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get unprocessed outbox events: %w", err)
 	}
 	defer rows.Close()
 
-	events := []model.OutboxEvent{}
+	events := make([]model.OutboxEvent, 0, limit)
 	for rows.Next() {
 		var e model.OutboxEvent
-		err := rows.Scan(
+		if err := rows.Scan(
 			&e.ID,
 			&e.NotificationID,
 			&e.Recipient,
@@ -74,11 +91,9 @@ func (r *OutboxRepository) GetUnprocessed(ctx context.Context, limit, maxRetries
 			&e.Content,
 			&e.Priority,
 			&e.Status,
-			&e.RetryCount,
 			&e.CreatedAt,
 			&e.ProcessedAt,
-		)
-		if err != nil {
+		); err != nil {
 			return nil, fmt.Errorf("failed to scan outbox event: %w", err)
 		}
 		events = append(events, e)
@@ -91,53 +106,28 @@ func (r *OutboxRepository) GetUnprocessed(ctx context.Context, limit, maxRetries
 	return events, nil
 }
 
-// IncrementRetryCount increments the retry count for an outbox event.
-func (r *OutboxRepository) IncrementRetryCount(ctx context.Context, id uuid.UUID) error {
-	query := `
-		UPDATE outbox_events
-		SET retry_count = retry_count + 1
-		WHERE id = $1
-	`
-	result, err := r.pool.Exec(ctx, query, id)
-	if err != nil {
-		return fmt.Errorf("failed to increment retry count: %w", err)
-	}
-	if result.RowsAffected() == 0 {
-		return fmt.Errorf("outbox event not found: %s", id)
-	}
-	return nil
-}
-
 // MarkProcessed marks an outbox event as processed (status = 'sent').
 func (r *OutboxRepository) MarkProcessed(ctx context.Context, id uuid.UUID) error {
-	query := `
-		UPDATE outbox_events
-		SET status = $2, processed_at = $3
-		WHERE id = $1
-	`
-	result, err := r.pool.Exec(ctx, query, id, model.OutboxStatusSent, time.Now())
-	if err != nil {
-		return fmt.Errorf("failed to mark outbox event as processed: %w", err)
-	}
-	if result.RowsAffected() == 0 {
-		return fmt.Errorf("outbox event not found: %s", id)
-	}
-	return nil
+	return r.updateStatus(ctx, id, model.OutboxStatusSent, "mark as processed")
 }
 
 // MarkFailed marks an outbox event as failed (status = 'failed').
 func (r *OutboxRepository) MarkFailed(ctx context.Context, id uuid.UUID) error {
-	query := `
-		UPDATE outbox_events
+	return r.updateStatus(ctx, id, model.OutboxStatusFailed, "mark as failed")
+}
+
+// updateStatus updates the status of an outbox event.
+func (r *OutboxRepository) updateStatus(ctx context.Context, id uuid.UUID, status model.OutboxEventStatus, action string) error {
+	query := `UPDATE outbox_events
 		SET status = $2, processed_at = $3
-		WHERE id = $1
-	`
-	result, err := r.pool.Exec(ctx, query, id, model.OutboxStatusFailed, time.Now())
+		WHERE id = $1`
+
+	result, err := r.pool.Exec(ctx, query, id, status, r.nowFunc())
 	if err != nil {
-		return fmt.Errorf("failed to mark outbox event as failed: %w", err)
+		return fmt.Errorf("failed to %s outbox event: %w", action, err)
 	}
 	if result.RowsAffected() == 0 {
-		return fmt.Errorf("outbox event not found: %s", id)
+		return fmt.Errorf("%w: %s", ErrOutboxEventNotFound, id)
 	}
 	return nil
 }

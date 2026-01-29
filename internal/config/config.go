@@ -20,7 +20,6 @@ type Config struct {
 type OutboxConfig struct {
 	PollInterval time.Duration
 	BatchSize    int
-	MaxRetries   int
 }
 
 // ConsumerConfig holds notification consumer configuration.
@@ -142,7 +141,6 @@ func Load() *Config {
 		Outbox: OutboxConfig{
 			PollInterval: getEnvAsDuration("OUTBOX_POLL_INTERVAL", 5*time.Second),
 			BatchSize:    getEnvAsInt("OUTBOX_BATCH_SIZE", 100),
-			MaxRetries:   getEnvAsInt("OUTBOX_MAX_RETRIES", 3),
 		},
 		Consumer: ConsumerConfig{
 			ConsumerGroup:      getEnv("CONSUMER_GROUP", "notification-consumer"),

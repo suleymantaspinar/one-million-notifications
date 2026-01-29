@@ -84,7 +84,6 @@ type OutboxEvent struct {
 	Content        string               `json:"content"`
 	Priority       NotificationPriority `json:"priority"`
 	Status         OutboxEventStatus    `json:"status"`
-	RetryCount     int                  `json:"retryCount"`
 	CreatedAt      time.Time            `json:"createdAt"`
 	ProcessedAt    *time.Time           `json:"processedAt,omitempty"`
 }

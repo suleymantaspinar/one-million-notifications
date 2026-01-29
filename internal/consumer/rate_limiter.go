@@ -32,17 +32,17 @@ func DefaultRateLimiterConfig() RateLimiterConfig {
 // RateLimiter implements a token bucket rate limiter with worker pool pattern.
 // It releases tokens at a fixed rate, and workers must acquire a token before processing.
 type RateLimiter struct {
-	config      RateLimiterConfig
-	tokens      chan struct{}    // Token bucket channel
-	ticker      *time.Ticker     // Releases tokens at fixed rate
-	stopCh      chan struct{}    // Signal to stop token generation
-	logger      *slog.Logger
-	wg          sync.WaitGroup
-	running     atomic.Bool
-	
+	config  RateLimiterConfig
+	tokens  chan struct{} // Token bucket channel
+	ticker  *time.Ticker  // Releases tokens at fixed rate
+	stopCh  chan struct{} // Signal to stop token generation
+	logger  *slog.Logger
+	wg      sync.WaitGroup
+	running atomic.Bool
+
 	// Metrics
-	acquired    atomic.Int64     // Total tokens acquired
-	waitTimeMs  atomic.Int64     // Total wait time in milliseconds
+	acquired   atomic.Int64 // Total tokens acquired
+	waitTimeMs atomic.Int64 // Total wait time in milliseconds
 }
 
 // NewRateLimiter creates a new rate limiter with the given configuration.
@@ -55,10 +55,10 @@ func NewRateLimiter(config RateLimiterConfig, logger *slog.Logger) *RateLimiter 
 	}
 
 	rl := &RateLimiter{
-		config:  config,
-		tokens:  make(chan struct{}, config.BurstSize),
-		stopCh:  make(chan struct{}),
-		logger:  logger,
+		config: config,
+		tokens: make(chan struct{}, config.BurstSize),
+		stopCh: make(chan struct{}),
+		logger: logger,
 	}
 
 	return rl
@@ -168,10 +168,10 @@ func (r *RateLimiter) Available() int {
 // Stats returns rate limiter statistics.
 func (r *RateLimiter) Stats() RateLimiterStats {
 	return RateLimiterStats{
-		MaxPerSecond:   r.config.MaxPerSecond,
-		BurstSize:      r.config.BurstSize,
-		Available:      len(r.tokens),
-		TotalAcquired:  r.acquired.Load(),
+		MaxPerSecond:    r.config.MaxPerSecond,
+		BurstSize:       r.config.BurstSize,
+		Available:       len(r.tokens),
+		TotalAcquired:   r.acquired.Load(),
 		TotalWaitTimeMs: r.waitTimeMs.Load(),
 	}
 }

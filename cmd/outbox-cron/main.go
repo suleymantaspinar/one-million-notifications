@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -57,7 +58,6 @@ func (p *OutboxProcessor) Run(ctx context.Context) {
 	p.logger.Info("outbox processor started",
 		slog.Duration("poll_interval", p.cfg.PollInterval),
 		slog.Int("batch_size", p.cfg.BatchSize),
-		slog.Int("max_retries", p.cfg.MaxRetries),
 	)
 
 	// Process immediately on startup
@@ -76,7 +76,7 @@ func (p *OutboxProcessor) Run(ctx context.Context) {
 
 // processEvents fetches and processes outbox events.
 func (p *OutboxProcessor) processEvents(ctx context.Context) {
-	events, err := p.outboxRepo.GetUnprocessed(ctx, p.cfg.BatchSize, p.cfg.MaxRetries)
+	events, err := p.outboxRepo.GetUnprocessed(ctx, p.cfg.BatchSize)
 	if err != nil {
 		p.logger.Error("failed to fetch outbox events",
 			slog.String("error", err.Error()),
@@ -97,30 +97,19 @@ func (p *OutboxProcessor) processEvents(ctx context.Context) {
 
 	for _, event := range events {
 		if err := p.publishEvent(ctx, event); err != nil {
-			p.logger.Error("failed to publish event",
+			p.logger.Error("failed to publish event, marking as failed",
 				slog.String("event_id", event.ID.String()),
 				slog.String("notification_id", event.NotificationID.String()),
 				slog.String("error", err.Error()),
-				slog.Int("retry_count", event.RetryCount),
 			)
 
-			// Increment retry count
-			if err := p.outboxRepo.IncrementRetryCount(ctx, event.ID); err != nil {
-				p.logger.Error("failed to increment retry count",
-					slog.String("event_id", event.ID.String()),
-					slog.String("error", err.Error()),
-				)
-			}
-
-			// Check if max retries exceeded (after increment, it will be >= maxRetries)
-			if event.RetryCount+1 >= p.cfg.MaxRetries {
-				p.logger.Warn("max retries exceeded, marking event as failed",
-					slog.String("event_id", event.ID.String()),
-					slog.String("notification_id", event.NotificationID.String()),
-					slog.Int("retry_count", event.RetryCount+1),
-				)
-
-				if err := p.outboxRepo.MarkFailed(ctx, event.ID); err != nil {
+			// Mark as failed immediately (no retry)
+			if err := p.outboxRepo.MarkFailed(ctx, event.ID); err != nil {
+				if errors.Is(err, repository.ErrOutboxEventNotFound) {
+					p.logger.Warn("outbox event not found when marking as failed",
+						slog.String("event_id", event.ID.String()),
+					)
+				} else {
 					p.logger.Error("failed to mark event as failed",
 						slog.String("event_id", event.ID.String()),
 						slog.String("error", err.Error()),
@@ -134,10 +123,16 @@ func (p *OutboxProcessor) processEvents(ctx context.Context) {
 
 		// Mark as processed (sent/published)
 		if err := p.outboxRepo.MarkProcessed(ctx, event.ID); err != nil {
-			p.logger.Error("failed to mark event as processed",
-				slog.String("event_id", event.ID.String()),
-				slog.String("error", err.Error()),
-			)
+			if errors.Is(err, repository.ErrOutboxEventNotFound) {
+				p.logger.Warn("outbox event not found when marking as processed",
+					slog.String("event_id", event.ID.String()),
+				)
+			} else {
+				p.logger.Error("failed to mark event as processed",
+					slog.String("event_id", event.ID.String()),
+					slog.String("error", err.Error()),
+				)
+			}
 			failCount++
 			continue
 		}

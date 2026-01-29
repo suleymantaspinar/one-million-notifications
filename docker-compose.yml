@@ -145,7 +145,6 @@ services:
       - KAFKA_BROKERS=kafka:9092
       - OUTBOX_POLL_INTERVAL=5s
       - OUTBOX_BATCH_SIZE=100
-      - OUTBOX_MAX_RETRIES=3
     depends_on:
       postgres:
         condition: service_healthy
