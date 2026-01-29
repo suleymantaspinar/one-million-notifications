@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -12,6 +13,7 @@ type Config struct {
 	Database DatabaseConfig
 	Kafka    KafkaConfig
 	Outbox   OutboxConfig
+	Consumer ConsumerConfig
 }
 
 // OutboxConfig holds outbox cron configuration.
@@ -20,6 +22,47 @@ type OutboxConfig struct {
 	BatchSize    int
 	MaxRetries   int
 }
+
+// ConsumerConfig holds notification consumer configuration.
+type ConsumerConfig struct {
+	// Consumer group ID
+	ConsumerGroup string
+
+	// Webhook URL for external notification provider
+	WebhookURL string
+
+	// HTTP timeout for webhook requests
+	HTTPTimeout time.Duration
+
+	// Worker pool configuration per channel
+	EmailWorkers int
+	SMSWorkers   int
+	PushWorkers  int
+
+	// Queue size per worker pool
+	QueueSize int
+
+	// Rate limiting per channel (max requests per interval)
+	EmailRateMax int
+	SMSRateMax   int
+	PushRateMax  int
+
+	// Rate limiting interval
+	RateLimitInterval time.Duration
+
+	// Retry configuration
+	MaxRetries     int
+	InitialBackoff time.Duration
+	MaxBackoff     time.Duration
+	BackoffMultiplier float64
+
+	// Idempotency TTL (how long to remember processed messages)
+	IdempotencyTTL time.Duration
+
+	// Graceful shutdown timeout
+	ShutdownTimeout time.Duration
+}
+
 
 // ServerConfig holds HTTP server configuration.
 type ServerConfig struct {
@@ -85,7 +128,7 @@ func Load() *Config {
 			MaxConnLifetime: getEnvAsDuration("DB_MAX_CONN_LIFETIME", time.Hour),
 		},
 		Kafka: KafkaConfig{
-			Brokers:      []string{getEnv("KAFKA_BROKERS", "localhost:9092")},
+			Brokers:      getEnvAsStringSlice("KAFKA_BROKERS", "localhost:9092"),
 			WriteTimeout: getEnvAsDuration("KAFKA_WRITE_TIMEOUT", 10*time.Second),
 			ReadTimeout:  getEnvAsDuration("KAFKA_READ_TIMEOUT", 10*time.Second),
 			Topics: KafkaTopics{
@@ -105,6 +148,25 @@ func Load() *Config {
 			PollInterval: getEnvAsDuration("OUTBOX_POLL_INTERVAL", 5*time.Second),
 			BatchSize:    getEnvAsInt("OUTBOX_BATCH_SIZE", 100),
 			MaxRetries:   getEnvAsInt("OUTBOX_MAX_RETRIES", 3),
+		},
+		Consumer: ConsumerConfig{
+			ConsumerGroup:     getEnv("CONSUMER_GROUP", "notification-consumer"),
+			WebhookURL:        getEnv("WEBHOOK_URL", "https://webhook.site/eb377dd8-129d-4fdd-9a83-e5f83314141d"),
+			HTTPTimeout:       getEnvAsDuration("HTTP_TIMEOUT", 30*time.Second),
+			EmailWorkers:      getEnvAsInt("EMAIL_WORKERS", 5),
+			SMSWorkers:        getEnvAsInt("SMS_WORKERS", 5),
+			PushWorkers:       getEnvAsInt("PUSH_WORKERS", 5),
+			QueueSize:         getEnvAsInt("QUEUE_SIZE", 100),
+			EmailRateMax:      getEnvAsInt("EMAIL_RATE_MAX", 100),
+			SMSRateMax:        getEnvAsInt("SMS_RATE_MAX", 50),
+			PushRateMax:       getEnvAsInt("PUSH_RATE_MAX", 200),
+			RateLimitInterval: getEnvAsDuration("RATE_LIMIT_INTERVAL", 1*time.Second),
+			MaxRetries:        getEnvAsInt("MAX_RETRIES", 3),
+			InitialBackoff:    getEnvAsDuration("INITIAL_BACKOFF", 1*time.Second),
+			MaxBackoff:        getEnvAsDuration("MAX_BACKOFF", 30*time.Second),
+			BackoffMultiplier: getEnvAsFloat("BACKOFF_MULTIPLIER", 2.0),
+			IdempotencyTTL:    getEnvAsDuration("IDEMPOTENCY_TTL", 24*time.Hour),
+			ShutdownTimeout:   getEnvAsDuration("SHUTDOWN_TIMEOUT", 30*time.Second),
 		},
 	}
 }
@@ -132,4 +194,20 @@ func getEnvAsDuration(key string, defaultValue time.Duration) time.Duration {
 		}
 	}
 	return defaultValue
+}
+
+func getEnvAsFloat(key string, defaultValue float64) float64 {
+	if value := os.Getenv(key); value != "" {
+		if floatValue, err := strconv.ParseFloat(value, 64); err == nil {
+			return floatValue
+		}
+	}
+	return defaultValue
+}
+
+func getEnvAsStringSlice(key string, defaultValue string) []string {
+	if value := os.Getenv(key); value != "" {
+		return strings.Split(value, ",")
+	}
+	return strings.Split(defaultValue, ",")
 }
