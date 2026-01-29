@@ -12,7 +12,6 @@ import (
 	"github.com/notifications-management-api/internal/consumer"
 	"github.com/notifications-management-api/internal/database"
 	"github.com/notifications-management-api/internal/model"
-	"github.com/notifications-management-api/internal/redis"
 	"github.com/notifications-management-api/internal/repository"
 )
 
@@ -32,6 +31,10 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// ==========================================================================
+	// Initialize Infrastructure Dependencies
+	// ==========================================================================
+
 	// Connect to database
 	db, err := database.NewPostgresDB(ctx, cfg.Database)
 	if err != nil {
@@ -41,37 +44,18 @@ func main() {
 	defer db.Close()
 	logger.Info("connected to PostgreSQL")
 
-	// Connect to Redis
-	redisClient, err := redis.NewClient(redis.Config{
-		Host:         cfg.Redis.Host,
-		Port:         cfg.Redis.Port,
-		Password:     cfg.Redis.Password,
-		DB:           cfg.Redis.DB,
-		PoolSize:     cfg.Redis.PoolSize,
-		MinIdleConns: cfg.Redis.MinIdleConns,
-		DialTimeout:  cfg.Redis.DialTimeout,
-		ReadTimeout:  cfg.Redis.ReadTimeout,
-		WriteTimeout: cfg.Redis.WriteTimeout,
-	}, logger)
-	if err != nil {
-		logger.Error("failed to connect to Redis", slog.String("error", err.Error()))
-		os.Exit(1)
-	}
-	defer redisClient.Close()
-	logger.Info("connected to Redis")
+	// ==========================================================================
+	// Initialize Shared Dependencies (Dependency Injection)
+	// ==========================================================================
 
-	// Initialize repositories
+	// Repositories
 	notificationRepo := repository.NewNotificationRepository(db.Pool)
-
-	// Initialize idempotency store
-	idempotencyStore := redis.NewIdempotencyStore(
-		redisClient,
-		"notification:processed",
-		cfg.Consumer.IdempotencyTTL,
-		logger,
+	idempotencyRepo := repository.NewIdempotencyRepository(db.Pool, cfg.Consumer.IdempotencyTTL, logger)
+	logger.Info("initialized idempotency repository",
+		slog.Duration("ttl", cfg.Consumer.IdempotencyTTL),
 	)
 
-	// Initialize DLQ producer
+	// DLQ producer
 	dlqProducer := consumer.NewKafkaDLQProducer(
 		cfg.Kafka.Brokers,
 		cfg.Kafka.Topics.DeadLetter,
@@ -80,7 +64,7 @@ func main() {
 	defer dlqProducer.Close()
 	logger.Info("initialized DLQ producer")
 
-	// Initialize retry configuration
+	// Retry configuration
 	retryConfig := consumer.RetryConfig{
 		MaxRetries:     cfg.Consumer.MaxRetries,
 		InitialBackoff: cfg.Consumer.InitialBackoff,
@@ -88,9 +72,20 @@ func main() {
 		Multiplier:     cfg.Consumer.BackoffMultiplier,
 	}
 
-	// Create rate limiters for each channel
-	emailRateLimiter := consumer.NewRateLimiter(cfg.Consumer.EmailRateMax, cfg.Consumer.RateLimitInterval, logger)
+	// ==========================================================================
+	// Create Sender Strategies (Strategy Pattern)
+	// ==========================================================================
+
+	smsSender := consumer.NewSMSSender(cfg.Consumer.WebhookURL, cfg.Consumer.HTTPTimeout, logger)
+	emailSender := consumer.NewEmailSender(cfg.Consumer.WebhookURL, cfg.Consumer.HTTPTimeout, logger)
+	pushSender := consumer.NewPushSender(cfg.Consumer.WebhookURL, cfg.Consumer.HTTPTimeout, logger)
+
+	// ==========================================================================
+	// Create Rate Limiters (one per channel)
+	// ==========================================================================
+
 	smsRateLimiter := consumer.NewRateLimiter(cfg.Consumer.SMSRateMax, cfg.Consumer.RateLimitInterval, logger)
+	emailRateLimiter := consumer.NewRateLimiter(cfg.Consumer.EmailRateMax, cfg.Consumer.RateLimitInterval, logger)
 	pushRateLimiter := consumer.NewRateLimiter(cfg.Consumer.PushRateMax, cfg.Consumer.RateLimitInterval, logger)
 
 	logger.Info("rate limiters configured",
@@ -100,43 +95,46 @@ func main() {
 		slog.Duration("interval", cfg.Consumer.RateLimitInterval),
 	)
 
-	// Create handler dependencies for each channel
-	emailDeps := &consumer.HandlerDependencies{
-		NotificationRepo: notificationRepo,
-		IdempotencyStore: idempotencyStore,
-		RateLimiter:      emailRateLimiter,
-		Retryer:          consumer.NewRetryer(retryConfig, logger),
-		DLQProducer:      dlqProducer,
-		Logger:           logger,
-	}
+	// ==========================================================================
+	// Create Handlers with Dependency Injection (Template Pattern)
+	// ==========================================================================
 
-	smsDeps := &consumer.HandlerDependencies{
-		NotificationRepo: notificationRepo,
-		IdempotencyStore: idempotencyStore,
+	smsHandler := consumer.NewSMSHandler(consumer.HandlerConfig{
+		Sender:           smsSender,
+		Idempotency:      idempotencyRepo,
 		RateLimiter:      smsRateLimiter,
 		Retryer:          consumer.NewRetryer(retryConfig, logger),
+		NotificationRepo: notificationRepo,
 		DLQProducer:      dlqProducer,
 		Logger:           logger,
-	}
+	})
 
-	pushDeps := &consumer.HandlerDependencies{
+	emailHandler := consumer.NewEmailHandler(consumer.HandlerConfig{
+		Sender:           emailSender,
+		Idempotency:      idempotencyRepo,
+		RateLimiter:      emailRateLimiter,
+		Retryer:          consumer.NewRetryer(retryConfig, logger),
 		NotificationRepo: notificationRepo,
-		IdempotencyStore: idempotencyStore,
+		DLQProducer:      dlqProducer,
+		Logger:           logger,
+	})
+
+	pushHandler := consumer.NewPushHandler(consumer.HandlerConfig{
+		Sender:           pushSender,
+		Idempotency:      idempotencyRepo,
 		RateLimiter:      pushRateLimiter,
 		Retryer:          consumer.NewRetryer(retryConfig, logger),
+		NotificationRepo: notificationRepo,
 		DLQProducer:      dlqProducer,
 		Logger:           logger,
-	}
+	})
 
-	// Create handlers for each channel
-	emailHandler := consumer.NewEmailHandler(cfg.Consumer.WebhookURL, cfg.Consumer.HTTPTimeout, emailDeps)
-	smsHandler := consumer.NewSMSHandler(cfg.Consumer.WebhookURL, cfg.Consumer.HTTPTimeout, smsDeps)
-	pushHandler := consumer.NewPushHandler(cfg.Consumer.WebhookURL, cfg.Consumer.HTTPTimeout, pushDeps)
+	// ==========================================================================
+	// Initialize Worker Pools (Fan-Out Pattern)
+	// ==========================================================================
 
-	// Initialize worker pool manager (Fan-Out Pattern)
 	poolManager := consumer.NewWorkerPoolManager(logger)
 
-	// Create worker pools for each channel
 	emailPool := consumer.NewWorkerPool(
 		"email-pool",
 		model.ChannelEmail,
@@ -176,7 +174,10 @@ func main() {
 		slog.Int("push_workers", cfg.Consumer.PushWorkers),
 	)
 
-	// Initialize Kafka consumer
+	// ==========================================================================
+	// Initialize Kafka Consumer
+	// ==========================================================================
+
 	kafkaConsumer := consumer.NewKafkaConsumer(
 		cfg.Kafka,
 		cfg.Consumer.ConsumerGroup,
@@ -196,7 +197,10 @@ func main() {
 		slog.String("consumer_group", cfg.Consumer.ConsumerGroup),
 	)
 
-	// Wait for shutdown signal
+	// ==========================================================================
+	// Graceful Shutdown
+	// ==========================================================================
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 

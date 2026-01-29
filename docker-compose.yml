@@ -49,6 +49,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql
       - ./migrations/002_outbox_retry.sql:/docker-entrypoint-initdb.d/002_outbox_retry.sql
+      - ./migrations/003_idempotency.sql:/docker-entrypoint-initdb.d/003_idempotency.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d notifications"]
       interval: 10s
@@ -156,23 +157,6 @@ services:
     networks:
       - notifications-network
 
-  redis:
-    image: redis:7-alpine
-    container_name: notifications-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 5s
-    restart: unless-stopped
-    networks:
-      - notifications-network
-
   notification-consumer:
     build:
       context: .
@@ -191,12 +175,6 @@ services:
       - DB_MIN_CONNS=2
       # Kafka
       - KAFKA_BROKERS=kafka:9092
-      # Redis
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=
-      - REDIS_DB=0
-      - REDIS_POOL_SIZE=10
       # Consumer settings
       - CONSUMER_GROUP=notification-consumer
       - WEBHOOK_URL=https://webhook.site/eb377dd8-129d-4fdd-9a83-e5f83314141d
@@ -216,7 +194,7 @@ services:
       - INITIAL_BACKOFF=1s
       - MAX_BACKOFF=30s
       - BACKOFF_MULTIPLIER=2.0
-      # Idempotency
+      # Idempotency (stored in PostgreSQL)
       - IDEMPOTENCY_TTL=24h
       # Graceful shutdown
       - SHUTDOWN_TIMEOUT=30s
@@ -227,8 +205,6 @@ services:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
-      redis:
-        condition: service_healthy
     restart: unless-stopped
     networks:
       - notifications-network
@@ -249,7 +225,6 @@ services:
 
 volumes:
   postgres_data:
-  redis_data:
 
 networks:
   notifications-network:

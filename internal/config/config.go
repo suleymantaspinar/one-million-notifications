@@ -14,7 +14,6 @@ type Config struct {
 	Kafka    KafkaConfig
 	Outbox   OutboxConfig
 	Consumer ConsumerConfig
-	Redis    RedisConfig
 }
 
 // OutboxConfig holds outbox cron configuration.
@@ -64,18 +63,6 @@ type ConsumerConfig struct {
 	ShutdownTimeout time.Duration
 }
 
-// RedisConfig holds Redis configuration.
-type RedisConfig struct {
-	Host         string
-	Port         int
-	Password     string
-	DB           int
-	PoolSize     int
-	MinIdleConns int
-	DialTimeout  time.Duration
-	ReadTimeout  time.Duration
-	WriteTimeout time.Duration
-}
 
 // ServerConfig holds HTTP server configuration.
 type ServerConfig struct {
@@ -180,17 +167,6 @@ func Load() *Config {
 			BackoffMultiplier: getEnvAsFloat("BACKOFF_MULTIPLIER", 2.0),
 			IdempotencyTTL:    getEnvAsDuration("IDEMPOTENCY_TTL", 24*time.Hour),
 			ShutdownTimeout:   getEnvAsDuration("SHUTDOWN_TIMEOUT", 30*time.Second),
-		},
-		Redis: RedisConfig{
-			Host:         getEnv("REDIS_HOST", "localhost"),
-			Port:         getEnvAsInt("REDIS_PORT", 6379),
-			Password:     getEnv("REDIS_PASSWORD", ""),
-			DB:           getEnvAsInt("REDIS_DB", 0),
-			PoolSize:     getEnvAsInt("REDIS_POOL_SIZE", 10),
-			MinIdleConns: getEnvAsInt("REDIS_MIN_IDLE_CONNS", 5),
-			DialTimeout:  getEnvAsDuration("REDIS_DIAL_TIMEOUT", 5*time.Second),
-			ReadTimeout:  getEnvAsDuration("REDIS_READ_TIMEOUT", 3*time.Second),
-			WriteTimeout: getEnvAsDuration("REDIS_WRITE_TIMEOUT", 3*time.Second),
 		},
 	}
 }
