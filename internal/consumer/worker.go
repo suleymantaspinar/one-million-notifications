@@ -66,24 +66,6 @@ func (p *WorkerPool) Start() {
 	}
 }
 
-// Submit submits a job to the worker pool.
-// Returns false if the pool is full or shutting down.
-func (p *WorkerPool) Submit(job *Job) bool {
-	select {
-	case <-p.ctx.Done():
-		return false
-	case p.jobs <- job:
-		return true
-	default:
-		// Queue is full, apply backpressure
-		p.logger.Warn("worker pool queue full, applying backpressure",
-			slog.String("pool", p.name),
-			slog.String("notification_id", job.Message.NotificationID),
-		)
-		return false
-	}
-}
-
 // SubmitWithTimeout submits a job with a timeout.
 func (p *WorkerPool) SubmitWithTimeout(job *Job, timeout time.Duration) bool {
 	select {
@@ -212,16 +194,6 @@ func (p *WorkerPool) processJob(workerID int, job *Job) {
 	)
 }
 
-// QueueLength returns the current number of jobs in the queue.
-func (p *WorkerPool) QueueLength() int {
-	return len(p.jobs)
-}
-
-// QueueCapacity returns the total capacity of the job queue.
-func (p *WorkerPool) QueueCapacity() int {
-	return cap(p.jobs)
-}
-
 // WorkerPoolManager manages multiple worker pools (fan-out pattern).
 type WorkerPoolManager struct {
 	pools  map[model.NotificationChannel]*WorkerPool
@@ -268,21 +240,6 @@ func (m *WorkerPoolManager) StopAll() {
 	for _, pool := range m.pools {
 		pool.Stop()
 	}
-}
-
-// WaitAll waits for all worker pools to finish.
-func (m *WorkerPoolManager) WaitAll() {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	var wg sync.WaitGroup
-	for _, pool := range m.pools {
-		wg.Add(1)
-		go func(p *WorkerPool) {
-			defer wg.Done()
-			p.Wait()
-		}(pool)
-	}
-	wg.Wait()
 }
 
 // DrainAllWithTimeout drains all worker pools with a timeout.

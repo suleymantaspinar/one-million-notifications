@@ -8,10 +8,6 @@ import (
 	"time"
 )
 
-// =============================================================================
-// Rate Limiter with Worker Pool Pattern
-// =============================================================================
-
 // RateLimiterConfig holds configuration for the rate limiter.
 type RateLimiterConfig struct {
 	// MaxPerSecond is the maximum number of messages allowed per second.
@@ -21,15 +17,7 @@ type RateLimiterConfig struct {
 	BurstSize int
 }
 
-// DefaultRateLimiterConfig returns the default configuration (100 msg/sec, no burst).
-func DefaultRateLimiterConfig() RateLimiterConfig {
-	return RateLimiterConfig{
-		MaxPerSecond: 100,
-		BurstSize:    100,
-	}
-}
-
-// RateLimiter implements a token bucket rate limiter with worker pool pattern.
+// RateLimiter implements a token bucket rate limiter.
 // It releases tokens at a fixed rate, and workers must acquire a token before processing.
 type RateLimiter struct {
 	config  RateLimiterConfig
@@ -54,14 +42,12 @@ func NewRateLimiter(config RateLimiterConfig, logger *slog.Logger) *RateLimiter 
 		config.BurstSize = config.MaxPerSecond
 	}
 
-	rl := &RateLimiter{
+	return &RateLimiter{
 		config: config,
 		tokens: make(chan struct{}, config.BurstSize),
 		stopCh: make(chan struct{}),
 		logger: logger,
 	}
-
-	return rl
 }
 
 // Start begins the token generation process.
@@ -146,121 +132,4 @@ func (r *RateLimiter) Wait(ctx context.Context) error {
 		r.waitTimeMs.Add(waitTime.Milliseconds())
 		return nil
 	}
-}
-
-// TryAcquire attempts to acquire a token without blocking.
-// Returns true if a token was acquired, false otherwise.
-func (r *RateLimiter) TryAcquire() bool {
-	select {
-	case <-r.tokens:
-		r.acquired.Add(1)
-		return true
-	default:
-		return false
-	}
-}
-
-// Available returns the number of tokens currently available.
-func (r *RateLimiter) Available() int {
-	return len(r.tokens)
-}
-
-// Stats returns rate limiter statistics.
-func (r *RateLimiter) Stats() RateLimiterStats {
-	return RateLimiterStats{
-		MaxPerSecond:    r.config.MaxPerSecond,
-		BurstSize:       r.config.BurstSize,
-		Available:       len(r.tokens),
-		TotalAcquired:   r.acquired.Load(),
-		TotalWaitTimeMs: r.waitTimeMs.Load(),
-	}
-}
-
-// RateLimiterStats holds rate limiter statistics.
-type RateLimiterStats struct {
-	MaxPerSecond    int
-	BurstSize       int
-	Available       int
-	TotalAcquired   int64
-	TotalWaitTimeMs int64
-}
-
-// =============================================================================
-// Rate Limiter Manager (manages rate limiters per channel)
-// =============================================================================
-
-// RateLimiterManager manages rate limiters for multiple channels.
-type RateLimiterManager struct {
-	limiters map[string]*RateLimiter
-	config   RateLimiterConfig
-	logger   *slog.Logger
-	mu       sync.RWMutex
-}
-
-// NewRateLimiterManager creates a new rate limiter manager.
-func NewRateLimiterManager(config RateLimiterConfig, logger *slog.Logger) *RateLimiterManager {
-	return &RateLimiterManager{
-		limiters: make(map[string]*RateLimiter),
-		config:   config,
-		logger:   logger,
-	}
-}
-
-// GetOrCreate returns the rate limiter for a channel, creating one if it doesn't exist.
-func (m *RateLimiterManager) GetOrCreate(channel string) *RateLimiter {
-	m.mu.RLock()
-	if rl, ok := m.limiters[channel]; ok {
-		m.mu.RUnlock()
-		return rl
-	}
-	m.mu.RUnlock()
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	// Double-check after acquiring write lock
-	if rl, ok := m.limiters[channel]; ok {
-		return rl
-	}
-
-	rl := NewRateLimiter(m.config, m.logger.With(slog.String("channel", channel)))
-	rl.Start()
-	m.limiters[channel] = rl
-
-	m.logger.Info("created rate limiter for channel",
-		slog.String("channel", channel),
-		slog.Int("max_per_second", m.config.MaxPerSecond),
-	)
-
-	return rl
-}
-
-// StartAll starts all rate limiters.
-func (m *RateLimiterManager) StartAll() {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	for _, rl := range m.limiters {
-		rl.Start()
-	}
-}
-
-// StopAll stops all rate limiters.
-func (m *RateLimiterManager) StopAll() {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	for _, rl := range m.limiters {
-		rl.Stop()
-	}
-}
-
-// Stats returns statistics for all rate limiters.
-func (m *RateLimiterManager) Stats() map[string]RateLimiterStats {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	stats := make(map[string]RateLimiterStats, len(m.limiters))
-	for channel, rl := range m.limiters {
-		stats[channel] = rl.Stats()
-	}
-	return stats
 }

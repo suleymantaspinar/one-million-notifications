@@ -28,10 +28,9 @@ func (r *BatchRepository) Create(ctx context.Context, batch *model.Batch) error 
 
 // CreateWithTx creates a new batch within a transaction.
 func (r *BatchRepository) CreateWithTx(ctx context.Context, tx database.DBTX, batch *model.Batch) error {
-	query := `
-		INSERT INTO batches (batch_id, total_count, success_count, failure_count, status, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`
+	query := `INSERT INTO batches (batch_id, total_count, success_count, failure_count, status, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6)`
+
 	_, err := tx.Exec(ctx, query,
 		batch.BatchID,
 		batch.TotalCount,
@@ -48,11 +47,10 @@ func (r *BatchRepository) CreateWithTx(ctx context.Context, tx database.DBTX, ba
 
 // GetByID retrieves a batch by its ID.
 func (r *BatchRepository) GetByID(ctx context.Context, batchID uuid.UUID) (*model.Batch, error) {
-	query := `
-		SELECT batch_id, total_count, success_count, failure_count, status, created_at
+	query := `SELECT batch_id, total_count, success_count, failure_count, status, created_at
 		FROM batches
-		WHERE batch_id = $1
-	`
+		WHERE batch_id = $1`
+
 	row := r.pool.QueryRow(ctx, query, batchID)
 
 	var b model.Batch
@@ -71,38 +69,4 @@ func (r *BatchRepository) GetByID(ctx context.Context, batchID uuid.UUID) (*mode
 		return nil, fmt.Errorf("failed to get batch: %w", err)
 	}
 	return &b, nil
-}
-
-// UpdateCounts updates the success and failure counts of a batch.
-func (r *BatchRepository) UpdateCounts(ctx context.Context, batchID uuid.UUID, successCount, failureCount int) error {
-	query := `
-		UPDATE batches
-		SET success_count = $2, failure_count = $3
-		WHERE batch_id = $1
-	`
-	result, err := r.pool.Exec(ctx, query, batchID, successCount, failureCount)
-	if err != nil {
-		return fmt.Errorf("failed to update batch counts: %w", err)
-	}
-	if result.RowsAffected() == 0 {
-		return model.ErrBatchNotFound
-	}
-	return nil
-}
-
-// UpdateStatus updates the status of a batch.
-func (r *BatchRepository) UpdateStatus(ctx context.Context, batchID uuid.UUID, status model.BatchStatus) error {
-	query := `
-		UPDATE batches
-		SET status = $2
-		WHERE batch_id = $1
-	`
-	result, err := r.pool.Exec(ctx, query, batchID, status)
-	if err != nil {
-		return fmt.Errorf("failed to update batch status: %w", err)
-	}
-	if result.RowsAffected() == 0 {
-		return model.ErrBatchNotFound
-	}
-	return nil
 }

@@ -16,16 +16,6 @@ type RetryConfig struct {
 	Multiplier     float64       // backoff multiplier
 }
 
-// DefaultRetryConfig returns default retry configuration.
-func DefaultRetryConfig() RetryConfig {
-	return RetryConfig{
-		MaxRetries:     3,
-		InitialBackoff: 1 * time.Second,
-		MaxBackoff:     30 * time.Second,
-		Multiplier:     2.0,
-	}
-}
-
 // Retryer handles retry logic with exponential backoff.
 type Retryer struct {
 	config RetryConfig
@@ -139,18 +129,13 @@ func (r *Retryer) shouldRetry(err error) bool {
 // calculateBackoff calculates the backoff duration for an attempt.
 func (r *Retryer) calculateBackoff(attempt int) time.Duration {
 	backoff := float64(r.config.InitialBackoff) * math.Pow(r.config.Multiplier, float64(attempt))
-	
+
 	// Cap at max backoff
 	if backoff > float64(r.config.MaxBackoff) {
 		backoff = float64(r.config.MaxBackoff)
 	}
 
 	return time.Duration(backoff)
-}
-
-// IsExhausted returns true if retry attempts are exhausted.
-func (r *RetryResult) IsExhausted(maxRetries int) bool {
-	return r.LastErr != nil && r.Attempts > maxRetries
 }
 
 // Success returns true if the operation succeeded.
