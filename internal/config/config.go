@@ -57,7 +57,6 @@ type ConsumerConfig struct {
 	ShutdownTimeout time.Duration
 }
 
-
 // ServerConfig holds HTTP server configuration.
 type ServerConfig struct {
 	Host         string
