@@ -1,5 +1,3 @@
-# one-million-notifications
-Event Driven Notification System Challenge
 # 📬 Notification Service
 
 A scalable, event-driven notification service built with Go, Kafka, and Docker. Supports multi-channel notifications (email, SMS, push) with priority-based processing and reliable delivery guarantees.
